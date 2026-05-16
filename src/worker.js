@@ -22,7 +22,7 @@ function corsHeaders(request, env) {
     "access-control-allow-origin": allowed.has(origin) ? origin : siteUrl,
     "access-control-allow-credentials": "true",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, authorization",
   };
 }
 
@@ -72,7 +72,9 @@ async function createSession(user, env) {
 }
 
 async function readSession(request, env) {
-  const token = parseCookies(request).blanch_sid;
+  const authorization = request.headers.get("authorization") || "";
+  const bearer = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const token = bearer || parseCookies(request).blanch_sid;
   if (!token || !token.includes(".")) return null;
   const [body, signature] = token.split(".");
   if ((await sign(body, env.SESSION_SECRET)) !== signature) return null;
@@ -201,7 +203,7 @@ export default {
           avatar: discordUser.avatar,
         };
         const session = await createSession(user, env);
-        return redirect(`${envText(env, "SITE_URL")}/?login=ok`, {
+        return redirect(`${envText(env, "SITE_URL")}/?login=ok#session=${encodeURIComponent(session)}`, {
           "set-cookie": [setCookie("blanch_oauth_state", "", 0), setCookie("blanch_sid", session, 7 * 24 * 60 * 60)].join(", "),
         });
       }
