@@ -180,8 +180,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/api/me") {
         const user = await readSession(request, env);
         if (!user) return json({ ok: true, user: null, cooldownLeft: 0 }, 200, cors);
-        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
-        return json({ ok: true, user, cooldownLeft: Math.max(0, COOLDOWN_MS - (Date.now() - last)) }, 200, cors);
+        return json({ ok: true, user, cooldownLeft: 0 }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord") {
@@ -228,20 +227,13 @@ export default {
         const user = await readSession(request, env);
         if (!user) return json({ ok: false, message: "Сначала войдите через Discord." }, 401, cors);
 
-        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
-        const left = Math.max(0, COOLDOWN_MS - (Date.now() - last));
-        if (left > 0) {
-          return json({ ok: false, message: `Повторную заявку можно отправить позже.`, cooldownLeft: left }, 429, cors);
-        }
-
         const data = await request.json();
         for (const field of ["identity", "online", "families", "reason", "experience"]) {
           if (!clean(data[field])) return json({ ok: false, message: "Заполните все поля." }, 400, cors);
         }
 
         await sendToDiscord(data, user, env);
-        await env.BLANCH_KV?.put(`cooldown:${user.id}`, String(Date.now()), { expirationTtl: 3600 });
-        return json({ ok: true, message: "Заявка отправлена.", cooldownLeft: COOLDOWN_MS }, 200, cors);
+        return json({ ok: true, message: "Заявка отправлена.", cooldownLeft: 0 }, 200, cors);
       }
 
       return json({ ok: false, message: "Not found" }, 404, cors);
