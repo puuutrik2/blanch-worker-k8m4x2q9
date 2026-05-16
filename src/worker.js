@@ -1,7 +1,13 @@
-const COOLDOWN_MS = 30 * 60 * 1000;
+﻿const COOLDOWN_MS = 30 * 60 * 1000;
+const DEFAULTS = {
+  DISCORD_CHANNEL_ID: "1504600279432302735",
+  DISCORD_CLIENT_ID: "1504600409971363860",
+  DISCORD_REDIRECT_URI: "https://blanch-worker-k8m4x2q9.rodionpytra.workers.dev/auth/discord/callback",
+  SITE_URL: "https://blanch.monster",
+};
 
 function envText(env, key) {
-  return String(env[key] || "").trim();
+  return String(env[key] || DEFAULTS[key] || "").trim();
 }
 
 function json(body, status = 200, headers = {}) {
@@ -115,21 +121,24 @@ async function exchangeDiscordCode(code, env) {
   return userResponse.json();
 }
 
-function buildDiscordMessage(data, user) {
+function buildDiscordMessage(data, user, env) {
+  const siteUrl = envText(env, "SITE_URL").replace(/\/$/, "");
+
   return {
-    content: "Новая заявка в BLANCH",
+    content: "РќРѕРІР°СЏ Р·Р°СЏРІРєР° РІ BLANCH",
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: "Заявка в семью BLANCH",
+        title: "Р—Р°СЏРІРєР° РІ СЃРµРјСЊСЋ BLANCH",
         color: 0xa70f18,
+        image: siteUrl ? { url: `${siteUrl}/blanch-title.gif` } : undefined,
         fields: [
           { name: "Discord login", value: `${discordTag(user)} (${user.id})`, inline: false },
-          { name: "Имя Фамилия IC | Возраст OOC", value: clean(data.identity) || "-", inline: false },
-          { name: "Онлайн в день | Часовой пояс", value: clean(data.online) || "-", inline: false },
-          { name: "В каких семьях были", value: clean(data.families) || "-", inline: false },
-          { name: "Почему BLANCH", value: clean(data.reason) || "-", inline: false },
-          { name: "Опыт на высоких должностях", value: clean(data.experience) || "-", inline: false },
+          { name: "РРјСЏ Р¤Р°РјРёР»РёСЏ IC | Р’РѕР·СЂР°СЃС‚ OOC", value: clean(data.identity) || "-", inline: false },
+          { name: "РћРЅР»Р°Р№РЅ РІ РґРµРЅСЊ | Р§Р°СЃРѕРІРѕР№ РїРѕСЏСЃ", value: clean(data.online) || "-", inline: false },
+          { name: "Р’ РєР°РєРёС… СЃРµРјСЊСЏС… Р±С‹Р»Рё", value: clean(data.families) || "-", inline: false },
+          { name: "РџРѕС‡РµРјСѓ BLANCH", value: clean(data.reason) || "-", inline: false },
+          { name: "РћРїС‹С‚ РЅР° РІС‹СЃРѕРєРёС… РґРѕР»Р¶РЅРѕСЃС‚СЏС…", value: clean(data.experience) || "-", inline: false },
         ],
         timestamp: new Date().toISOString(),
       },
@@ -138,13 +147,13 @@ function buildDiscordMessage(data, user) {
 }
 
 async function sendToDiscord(data, user, env) {
-  const response = await fetch(`https://discord.com/api/v10/channels/${env.DISCORD_CHANNEL_ID}/messages`, {
+  const response = await fetch(`https://discord.com/api/v10/channels/${envText(env, "DISCORD_CHANNEL_ID")}/messages`, {
     method: "POST",
     headers: {
-      authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+      authorization: `Bot ${envText(env, "DISCORD_BOT_TOKEN")}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(buildDiscordMessage(data, user)),
+    body: JSON.stringify(buildDiscordMessage(data, user, env)),
   });
 
   if (!response.ok) {
@@ -180,7 +189,8 @@ export default {
       if (request.method === "GET" && url.pathname === "/api/me") {
         const user = await readSession(request, env);
         if (!user) return json({ ok: true, user: null, cooldownLeft: 0 }, 200, cors);
-        return json({ ok: true, user, cooldownLeft: 0 }, 200, cors);
+        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
+        return json({ ok: true, user, cooldownLeft: Math.max(0, COOLDOWN_MS - (Date.now() - last)) }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord") {
@@ -225,15 +235,22 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/api/apply") {
         const user = await readSession(request, env);
-        if (!user) return json({ ok: false, message: "Сначала войдите через Discord." }, 401, cors);
+        if (!user) return json({ ok: false, message: "РЎРЅР°С‡Р°Р»Р° РІРѕР№РґРёС‚Рµ С‡РµСЂРµР· Discord." }, 401, cors);
+
+        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
+        const left = Math.max(0, COOLDOWN_MS - (Date.now() - last));
+        if (left > 0) {
+          return json({ ok: false, message: "Повторную заявку можно отправить позже.", cooldownLeft: left }, 429, cors);
+        }
 
         const data = await request.json();
         for (const field of ["identity", "online", "families", "reason", "experience"]) {
-          if (!clean(data[field])) return json({ ok: false, message: "Заполните все поля." }, 400, cors);
+          if (!clean(data[field])) return json({ ok: false, message: "Р—Р°РїРѕР»РЅРёС‚Рµ РІСЃРµ РїРѕР»СЏ." }, 400, cors);
         }
 
         await sendToDiscord(data, user, env);
-        return json({ ok: true, message: "Заявка отправлена.", cooldownLeft: 0 }, 200, cors);
+        await env.BLANCH_KV?.put(`cooldown:${user.id}`, String(Date.now()), { expirationTtl: 3600 });
+        return json({ ok: true, message: "Р—Р°СЏРІРєР° РѕС‚РїСЂР°РІР»РµРЅР°.", cooldownLeft: COOLDOWN_MS }, 200, cors);
       }
 
       return json({ ok: false, message: "Not found" }, 404, cors);
@@ -242,3 +259,4 @@ export default {
     }
   },
 };
+
