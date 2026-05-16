@@ -161,7 +161,20 @@ export default {
 
     try {
       if (request.method === "GET" && url.pathname === "/api/health") {
-        return json({ ok: true }, 200, cors);
+        return json(
+          {
+            ok: true,
+            discordBotToken: Boolean(envText(env, "DISCORD_BOT_TOKEN")),
+            discordChannelId: Boolean(envText(env, "DISCORD_CHANNEL_ID")),
+            discordClientId: Boolean(envText(env, "DISCORD_CLIENT_ID")),
+            discordClientSecret: Boolean(envText(env, "DISCORD_CLIENT_SECRET")),
+            discordRedirectUri: envText(env, "DISCORD_REDIRECT_URI"),
+            siteUrl: envText(env, "SITE_URL"),
+            sessionSecret: Boolean(envText(env, "SESSION_SECRET")),
+          },
+          200,
+          cors,
+        );
       }
 
       if (request.method === "GET" && url.pathname === "/api/me") {
@@ -179,7 +192,6 @@ export default {
           response_type: "code",
           scope: "identify",
           state,
-          prompt: "none",
         });
         return redirect(`https://discord.com/oauth2/authorize?${params}`, {
           "set-cookie": setCookie("blanch_oauth_state", state, 600),
