@@ -1,5 +1,9 @@
 const COOLDOWN_MS = 30 * 60 * 1000;
 
+function envText(env, key) {
+  return String(env[key] || "").trim();
+}
+
 function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
     status,
@@ -12,9 +16,10 @@ function json(body, status = 200, headers = {}) {
 
 function corsHeaders(request, env) {
   const origin = request.headers.get("origin");
-  const allowed = new Set([env.SITE_URL, "http://127.0.0.1:4183", "http://localhost:4183"].filter(Boolean));
+  const siteUrl = envText(env, "SITE_URL");
+  const allowed = new Set([siteUrl, "http://127.0.0.1:4183", "http://localhost:4183"].filter(Boolean));
   return {
-    "access-control-allow-origin": allowed.has(origin) ? origin : env.SITE_URL,
+    "access-control-allow-origin": allowed.has(origin) ? origin : siteUrl,
     "access-control-allow-credentials": "true",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type",
@@ -79,11 +84,11 @@ async function readSession(request, env) {
 
 async function exchangeDiscordCode(code, env) {
   const body = new URLSearchParams({
-    client_id: env.DISCORD_CLIENT_ID,
-    client_secret: env.DISCORD_CLIENT_SECRET,
+    client_id: envText(env, "DISCORD_CLIENT_ID"),
+    client_secret: envText(env, "DISCORD_CLIENT_SECRET"),
     grant_type: "authorization_code",
     code,
-    redirect_uri: env.DISCORD_REDIRECT_URI,
+    redirect_uri: envText(env, "DISCORD_REDIRECT_URI"),
   });
 
   const tokenResponse = await fetch("https://discord.com/api/v10/oauth2/token", {
@@ -167,8 +172,8 @@ export default {
       if (request.method === "GET" && url.pathname === "/auth/discord") {
         const state = crypto.randomUUID();
         const params = new URLSearchParams({
-          client_id: env.DISCORD_CLIENT_ID,
-          redirect_uri: env.DISCORD_REDIRECT_URI,
+          client_id: envText(env, "DISCORD_CLIENT_ID"),
+          redirect_uri: envText(env, "DISCORD_REDIRECT_URI"),
           response_type: "code",
           scope: "identify",
           state,
@@ -184,7 +189,7 @@ export default {
         const code = url.searchParams.get("code");
         const cookies = parseCookies(request);
         if (!state || !code || cookies.blanch_oauth_state !== state) {
-          return redirect(`${env.SITE_URL}/?login=failed`, { "set-cookie": setCookie("blanch_oauth_state", "", 0) });
+          return redirect(`${envText(env, "SITE_URL")}/?login=failed`, { "set-cookie": setCookie("blanch_oauth_state", "", 0) });
         }
 
         const discordUser = await exchangeDiscordCode(code, env);
@@ -196,7 +201,7 @@ export default {
           avatar: discordUser.avatar,
         };
         const session = await createSession(user, env);
-        return redirect(`${env.SITE_URL}/?login=ok`, {
+        return redirect(`${envText(env, "SITE_URL")}/?login=ok`, {
           "set-cookie": [setCookie("blanch_oauth_state", "", 0), setCookie("blanch_sid", session, 7 * 24 * 60 * 60)].join(", "),
         });
       }
