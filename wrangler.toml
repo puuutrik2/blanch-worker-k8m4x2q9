@@ -1,0 +1,3 @@
+﻿name = "blanch-worker-k8m4x2q9"
+main = "src/worker.js"
+compatibility_date = "2026-05-17"

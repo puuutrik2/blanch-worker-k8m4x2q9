@@ -1,0 +1,11 @@
+﻿{
+  "name": "blanch-worker-k8m4x2q9",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "latest"
+  }
+}
