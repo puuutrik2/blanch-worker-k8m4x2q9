@@ -72,8 +72,8 @@ async function sign(payload, secret) {
   return btoa(String.fromCharCode(...new Uint8Array(signature))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-async function createSession(user, env) {
-  const body = btoa(JSON.stringify({ user, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+async function createSession(user, env, extra = {}) {
+  const body = btoa(JSON.stringify({ user, exp: Date.now() + 7 * 24 * 60 * 60 * 1000, ...extra }));
   return `${body}.${await sign(body, env.SESSION_SECRET)}`;
 }
 
@@ -87,7 +87,7 @@ async function readSession(request, env) {
 
   const session = JSON.parse(atob(body));
   if (session.exp < Date.now()) return null;
-  return session.user;
+  return session;
 }
 
 async function exchangeDiscordCode(code, env) {
@@ -187,10 +187,9 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/api/me") {
-        const user = await readSession(request, env);
-        if (!user) return json({ ok: true, user: null, cooldownLeft: 0 }, 200, cors);
-        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
-        return json({ ok: true, user, cooldownLeft: Math.max(0, COOLDOWN_MS - (Date.now() - last)) }, 200, cors);
+        const session = await readSession(request, env);
+        if (!session) return json({ ok: true, user: null, cooldownLeft: 0 }, 200, cors);
+        return json({ ok: true, user: session.user, cooldownLeft: Math.max(0, (session.cooldownUntil || 0) - Date.now()) }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord") {
@@ -234,11 +233,10 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/api/apply") {
-        const user = await readSession(request, env);
-        if (!user) return json({ ok: false, message: "Сначала войдите через Discord." }, 401, cors);
+        const session = await readSession(request, env);
+        if (!session) return json({ ok: false, message: "Сначала войдите через Discord." }, 401, cors);
 
-        const last = Number(await env.BLANCH_KV?.get(`cooldown:${user.id}`)) || 0;
-        const left = Math.max(0, COOLDOWN_MS - (Date.now() - last));
+        const left = Math.max(0, (session.cooldownUntil || 0) - Date.now());
         if (left > 0) {
           return json({ ok: false, message: "Повторную заявку можно отправить позже.", cooldownLeft: left }, 429, cors);
         }
@@ -248,9 +246,17 @@ export default {
           if (!clean(data[field])) return json({ ok: false, message: "Заполните все поля." }, 400, cors);
         }
 
-        await sendToDiscord(data, user, env);
-        await env.BLANCH_KV?.put(`cooldown:${user.id}`, String(Date.now()), { expirationTtl: 3600 });
-        return json({ ok: true, message: "Заявка отправлена.", cooldownLeft: COOLDOWN_MS }, 200, cors);
+        await sendToDiscord(data, session.user, env);
+        return json(
+          {
+            ok: true,
+            message: "Заявка отправлена.",
+            cooldownLeft: COOLDOWN_MS,
+            session: await createSession(session.user, env, { cooldownUntil: Date.now() + COOLDOWN_MS }),
+          },
+          200,
+          cors,
+        );
       }
 
       return json({ ok: false, message: "Not found" }, 404, cors);
