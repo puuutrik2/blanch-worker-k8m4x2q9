@@ -23,7 +23,7 @@ function json(body, status = 200, headers = {}) {
 function corsHeaders(request, env) {
   const origin = request.headers.get("origin");
   const siteUrl = envText(env, "SITE_URL");
-  const allowed = new Set([siteUrl, "http://127.0.0.1:4183", "http://localhost:4183"].filter(Boolean));
+  const allowed = new Set([siteUrl, "http://127.0.0.1:4183", "http://localhost:4183", "http://127.0.0.1:4188", "http://localhost:4188"].filter(Boolean));
   return {
     "access-control-allow-origin": allowed.has(origin) ? origin : siteUrl,
     "access-control-allow-credentials": "true",
@@ -34,6 +34,24 @@ function corsHeaders(request, env) {
 
 function redirect(location, headers = {}) {
   return new Response(null, { status: 302, headers: { location, ...headers } });
+}
+
+function allowedReturnUrl(value, env) {
+  if (!value) return envText(env, "SITE_URL");
+  try {
+    const target = new URL(value);
+    const site = new URL(envText(env, "SITE_URL"));
+    const allowedOrigins = new Set([
+      site.origin,
+      "http://127.0.0.1:4183",
+      "http://localhost:4183",
+      "http://127.0.0.1:4188",
+      "http://localhost:4188",
+    ]);
+    return allowedOrigins.has(target.origin) ? target.toString().replace(/#.*$/, "") : envText(env, "SITE_URL");
+  } catch {
+    return envText(env, "SITE_URL");
+  }
 }
 
 function parseCookies(request) {
@@ -194,6 +212,7 @@ export default {
 
       if (request.method === "GET" && url.pathname === "/auth/discord") {
         const state = crypto.randomUUID();
+        const returnTo = allowedReturnUrl(url.searchParams.get("return_to"), env);
         const params = new URLSearchParams({
           client_id: envText(env, "DISCORD_CLIENT_ID"),
           redirect_uri: envText(env, "DISCORD_REDIRECT_URI"),
@@ -202,7 +221,7 @@ export default {
           state,
         });
         return redirect(`https://discord.com/oauth2/authorize?${params}`, {
-          "set-cookie": setCookie("blanch_oauth_state", state, 600),
+          "set-cookie": [setCookie("blanch_oauth_state", state, 600), setCookie("blanch_return_to", returnTo, 600)].join(", "),
         });
       }
 
@@ -210,8 +229,11 @@ export default {
         const state = url.searchParams.get("state");
         const code = url.searchParams.get("code");
         const cookies = parseCookies(request);
+        const returnTo = allowedReturnUrl(cookies.blanch_return_to, env);
         if (!state || !code || cookies.blanch_oauth_state !== state) {
-          return redirect(`${envText(env, "SITE_URL")}/?login=failed`, { "set-cookie": setCookie("blanch_oauth_state", "", 0) });
+          return redirect(`${returnTo.split("#")[0]}?login=failed`, {
+            "set-cookie": [setCookie("blanch_oauth_state", "", 0), setCookie("blanch_return_to", "", 0)].join(", "),
+          });
         }
 
         const discordUser = await exchangeDiscordCode(code, env);
@@ -223,8 +245,11 @@ export default {
           avatar: discordUser.avatar,
         };
         const session = await createSession(user, env);
-        return redirect(`${envText(env, "SITE_URL")}/?login=ok#session=${encodeURIComponent(session)}`, {
-          "set-cookie": [setCookie("blanch_oauth_state", "", 0), setCookie("blanch_sid", session, 7 * 24 * 60 * 60)].join(", "),
+        const doneUrl = new URL(returnTo);
+        doneUrl.searchParams.set("login", "ok");
+        doneUrl.hash = `session=${encodeURIComponent(session)}`;
+        return redirect(doneUrl.toString(), {
+          "set-cookie": [setCookie("blanch_oauth_state", "", 0), setCookie("blanch_return_to", "", 0), setCookie("blanch_sid", session, 7 * 24 * 60 * 60)].join(", "),
         });
       }
 
